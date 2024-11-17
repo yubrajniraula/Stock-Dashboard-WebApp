@@ -2,6 +2,9 @@ import yfinance as yf
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from sklearn.linear_model import LinearRegression
+import numpy as np
+from datetime import datetime, timedelta
 
 # App Configuration
 st.set_page_config(page_title="Stock Dashboard", layout="wide")
@@ -56,6 +59,40 @@ if ticker:
         fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', name='Close'))
         fig.update_layout(title=f"{ticker.upper()} Stock Price", xaxis_title="Date", yaxis_title="Price")
         st.plotly_chart(fig)
+
+    ### ML Part
+        # Add prediction section
+        st.subheader("Price Prediction")
+        # Add date input for prediction
+        min_date = hist.index.min().date()
+        max_date = hist.index.max().date() + timedelta(days=365)  # Allow prediction up to 1 year in future
+        user_date = st.date_input(
+            "Select date for prediction",
+            value=hist.index.max().date() + timedelta(days=30),  # Default to 30 days in future
+            min_value=min_date,
+            max_value=max_date
+        )
+
+        # Get 2 years of historical data for model training
+        training_data = stock.history(period='2y')
+        
+        # Prepare data for ML model using the 2-year data
+        training_data['Date'] = training_data.index
+        training_data['Date'] = training_data['Date'].map(datetime.toordinal)  # Convert dates to ordinal numbers
+        X = np.array(training_data['Date']).reshape(-1, 1)
+        y = np.array(training_data['Close'])
+
+        # Train a Linear Regression model
+        model = LinearRegression()
+        model.fit(X, y)
+
+        # Predict price for the chosen date
+        chosen_date_ordinal = datetime.toordinal(user_date)
+        predicted_price = model.predict([[chosen_date_ordinal]])
+
+        # Display the prediction
+        st.write(f"Predicted Price on {user_date.strftime('%Y-%m-%d')}: **${predicted_price[0]:.2f}**")
+        st.write("*Note: Prediction model is trained on 2 years of historical data*")
 
     except Exception as e:
         st.error(f"Error fetching data for {ticker.upper()}. Please check the ticker.")

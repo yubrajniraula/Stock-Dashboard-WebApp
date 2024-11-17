@@ -15,6 +15,7 @@ stock-dashboard/\
 - **YFinance**: Fetches stock data and news.
 - **Plotly**: Creates interactive charts.
 - **Streamlit**: Provides the web interface.
+- **Scikit-learn**: Provides ML algorithms.
 
 ## Future Enhancements
 - Add user authentication.
