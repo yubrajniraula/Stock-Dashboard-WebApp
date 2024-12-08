@@ -5,19 +5,18 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 import numpy as np
 from datetime import datetime, timedelta
-from sklearn.preprocessing import MinMaxScaler
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_squared_error
 
 # App Configuration
 st.set_page_config(page_title="Stock Dashboard", layout="wide")
 
 # Title and Search Bar
 st.title("📈 Stock Dashboard")
-ticker = st.text_input("Enter Stock Ticker (e.g., MSFT, AAPL):", "")
+ticker = st.text_input("Enter Stock or an ETF Ticker (e.g., MSFT, AAPL, SPY):", "")
 
 if ticker:
     try:
@@ -37,10 +36,14 @@ if ticker:
             st.metric("Day Low", f"${info.get('dayLow', 'N/A')}")
             st.metric("52-Week Low", f"${info.get('fiftyTwoWeekLow', 'N/A')}")
 
-        # Revenue and Market Cap
-        st.write("**Market Cap:**", f"${info.get('marketCap', 'N/A'):,}")
-        st.write("**Total Revenue:**", f"${info.get('totalRevenue', 'N/A'):,}")
-        st.write("**Revenue per Share:**", f"${info.get('revenuePerShare', 'N/A')}")
+        # Revenue and Market Cap.
+        # ETF's do not have these values so we need to check
+        if 'marketCap' in info:
+            st.write("**Market Cap:**", f"${info['marketCap']:,}")
+        if 'totalRevenue' in info:
+            st.write("**Total Revenue:**", f"${info['totalRevenue']:,}")
+        if 'revenuePerShare' in info:
+            st.write("**Revenue per Share:**", f"${info['revenuePerShare']}")
 
         # Latest News
         st.subheader("Latest News")
@@ -57,122 +60,145 @@ if ticker:
 
         # Historical Chart
         st.subheader("Historical Chart")
-        period = st.selectbox("Select Period", ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'])
+        col1, col2 = st.columns(2)
+        with col1:
+            period = st.selectbox("Select Period", ['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'])
+        with col2:
+            chart_type = st.selectbox("Select Chart Type", ['Line Chart', 'Candlestick Chart', 'Volume-Overlaid Chart'])
         hist = stock.history(period=period)
 
         # Plot Chart
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', name='Close'))
-        fig.update_layout(title=f"{ticker.upper()} Stock Price", xaxis_title="Date", yaxis_title="Price")
+
+        if chart_type == 'Line Chart':
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', name='Close'))
+            fig.update_layout(title=f"{ticker.upper()} Stock Price (Line Chart)", xaxis_title="Date", yaxis_title="Price")
+
+        elif chart_type == 'Candlestick Chart':
+            fig.add_trace(go.Candlestick(
+                x=hist.index,
+                open=hist['Open'],
+                high=hist['High'],
+                low=hist['Low'],
+                close=hist['Close'],
+                name='Candlestick'
+            ))
+            fig.update_layout(title=f"{ticker.upper()} Stock Price (Candlestick Chart)", xaxis_title="Date", yaxis_title="Price")
+
+        elif chart_type == 'Volume-Overlaid Chart':
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', name='Close'))
+            fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name='Volume', opacity=0.4, yaxis='y2'))
+            fig.update_layout(
+                title=f"{ticker.upper()} Stock Price with Volume (Volume-Overlaid Chart)",
+                xaxis_title="Date",
+                yaxis_title="Price",
+                yaxis2=dict(
+                    title="Volume",
+                    overlaying="y",
+                    side="right"
+                )
+            )
+
+        # Apply the increased size to all chart types
+        fig.update_layout(width=1200, height=600)  # Set global width and height
         st.plotly_chart(fig)
 
-    ### ML Part
+
+        ### ML Part
         # Add prediction section
         st.subheader("Price Prediction")
-        # Add date input for prediction
-        min_date = hist.index.min().date()
-        max_date = hist.index.max().date() + timedelta(days=365)  # Allow prediction up to 1 year in future
-        user_date = st.date_input(
-            "Select date for prediction",
-            value=hist.index.max().date() + timedelta(days=30),  # Default to 30 days in future
-            min_value=min_date,
-            max_value=max_date
-        )
+        st.write("(Based on Polynomial Regression Model)")
 
-        future_days = 30
-        
-        # Get 2 years of historical data for model training
-        training_data = stock.history(period='2y') # Prepare data for the LSTM model
-        training_data = training_data[['Close']]  # Use 'Close' prices for prediction
-        scaler = MinMaxScaler(feature_range=(0, 1))  # Normalize the data
-        training_data_scaled = scaler.fit_transform(training_data)
+        # Prepare data for prediction
+        two_years_data = stock.history(period='2y')
+        two_years_data = two_years_data[['Close', 'Volume']]
+        two_years_data['50_MA'] = two_years_data['Close'].rolling(window=50).mean()
+        two_years_data['200_MA'] = two_years_data['Close'].rolling(window=200).mean()
+        two_years_data.dropna(inplace=True)  # Remove rows with NaN values due to moving averages
 
-        # Create train-test split
-        look_back = 60  # Use the past 60 days to predict the next price
-        X, y = [], []
+        # Features and target
+        X = two_years_data[['Volume', '50_MA', '200_MA']].values
+        y = two_years_data['Close'].values
 
-        for i in range(look_back, len(training_data_scaled)):
-            X.append(training_data_scaled[i - look_back:i, 0])  # Last 60 days
-            y.append(training_data_scaled[i, 0])  # The next day's price
-
-        X, y = np.array(X), np.array(y)
-        X = np.reshape(X, (X.shape[0], X.shape[1], 1))  # Reshape for LSTM input
-
-        # Split data into training and testing sets
+        # Train-test split
         train_size = int(0.8 * len(X))
         X_train, X_test = X[:train_size], X[train_size:]
         y_train, y_test = y[:train_size], y[train_size:]
-        
-        # Build the LSTM model
-        model = Sequential([
-            LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)),
-            Dropout(0.2),
-            LSTM(units=50, return_sequences=False),
-            Dropout(0.2),
-            Dense(units=25),
-            Dense(units=1)  # Final output layer
+        test_dates = two_years_data.index[train_size:]
+
+        # Polynomial regression with degree 2
+        poly_degree = 2
+        model = Pipeline([
+            ('poly_features', PolynomialFeatures(degree=poly_degree)),
+            ('linear_regression', LinearRegression())
         ])
 
-        model.compile(optimizer='adam', loss='mean_squared_error')
-
         # Train the model
-        model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_test, y_test), verbose=1)
+        model.fit(X_train, y_train)
 
-        # Predict price for the chosen date
-        future_date_ordinal = datetime.toordinal(user_date)  # Convert user_date to ordinal
-        last_sequence = training_data_scaled[-look_back:]  # Last known sequence
-        future_predictions = []  # Store predictions
-        prediction_dates = []  # Store dates for prediction
+        # Predict for the test set
+        y_pred = model.predict(X_test)
 
-        for i in range(future_days):
-            prediction = model.predict(np.expand_dims(last_sequence, axis=0))[0, 0]
-            future_predictions.append(prediction)
-            
-            # Append predicted date
-            prediction_dates.append(user_date + timedelta(days=i))
-            
-            # Shift and append prediction
-            last_sequence = np.vstack([last_sequence[1:], [[prediction]]])
+        # Add date input for prediction
+        # min_date = two_years_data.index.min().date()  # Earliest available data
+        max_date = two_years_data.index.max().date() + timedelta(days=365)  # Allow prediction up to 1 year in the future
+        default_date = two_years_data.index.max().date() + timedelta(days=30)  # Default to 30 days in the future
+        user_date = st.date_input(
+            "Select date for prediction",
+            value=default_date,
+            min_value=(two_years_data.index.max().date() + timedelta(days=1)),
+            max_value=max_date
+        )
 
-        # Inverse transform the predictions to get actual prices
-        predicted_prices = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1)).flatten()
+        # Predict for future date
+        future_days = (user_date - two_years_data.index.max().date()).days
+        future_prices = []
 
-        # Display predicted prices for each day
-        for i, predicted_price in enumerate(predicted_prices):
-            st.write(f"Predicted Price on {prediction_dates[i].strftime('%Y-%m-%d')}: **${predicted_price:.2f}**")
+        if future_days > 0:
+            # Generate realistic future features for predictions
+            for i in range(1, future_days + 1):
+                future_date = two_years_data.index.max() + timedelta(days=i)
+                last_volume = two_years_data['Volume'].iloc[-1] * (1 + np.random.normal(0, 0.01))  # Add slight randomness
+                last_50_ma = two_years_data['50_MA'].iloc[-1] * (1 + np.random.normal(0, 0.005))
+                last_200_ma = two_years_data['200_MA'].iloc[-1] * (1 + np.random.normal(0, 0.002))
 
-        st.write("*Note: Prediction model is trained on 2 years of historical data*")
+                future_features = np.array([last_volume, last_50_ma, last_200_ma]).reshape(1, -1)
+                future_features_poly = model.named_steps['poly_features'].transform(future_features)
+                predicted_price = model.named_steps['linear_regression'].predict(future_features_poly)[0]
+                future_prices.append((future_date, predicted_price))
 
-        #Plot the historical and predicted prices
+            # Get prediction for the user-selected date
+            selected_future_price = future_prices[-1][1]
+            st.write(f"Predicted Price on {user_date}: **${selected_future_price:.2f}**")
+            st.write("** 🚨 Disclaimer 🚨: \
+            This is not a financial advice. \
+            Investing involves risk.**\
+            ")
+        else:
+            st.warning("Selected date is within historical range. Use actual closing prices for this range.")
+
+        # Plot actual and predicted prices
         plt.figure(figsize=(12, 6))
-        plt.plot(prediction_dates, predicted_prices, label='Predicted Prices', color='red', linestyle='--')
-        plt.title(f"Stock Price Prediction for {ticker.upper()}")
-        plt.xlabel("Date")
-        plt.ylabel("Price")
-        plt.xticks(rotation=45)
-        plt.legend()
-        plt.grid(True)
 
-        # Show the plot in Streamlit
+        # Actual test prices
+        plt.plot(test_dates, y_test, label="Actual Closing Prices", color='blue')
+
+        # Predicted test prices
+        plt.plot(test_dates, y_pred, label="Predicted Closing Prices (Test Data)", color='red', linestyle='--')
+
+        # Future prediction
+        if future_days > 0:
+            future_dates, future_values = zip(*future_prices)
+            plt.plot(future_dates, future_values, label="Predicted Future Prices", color='green', linestyle='--')
+            plt.axvline(x=two_years_data.index.max(), color='gray', linestyle='--', label="Prediction Start Date")
+            plt.scatter([user_date], [selected_future_price], color='purple', label="User-Selected Date Price", zorder=5)
+
+        plt.xlabel("Date")
+        plt.ylabel("Stock Price")
+        plt.title("Actual vs Predicted Closing Prices")
+        plt.legend()
         st.pyplot(plt)
+
 
     except Exception as e:
         st.error(f"Error fetching data for {ticker.upper()}. Please check the ticker.")
-    
-    # Prepare data for ML model using the 2-year data
-        # training_data['Date'] = training_data.index
-        # training_data['Date'] = training_data['Date'].map(datetime.toordinal)  # Convert dates to ordinal numbers
-        # X = np.array(training_data['Date']).reshape(-1, 1)
-        # y = np.array(training_data['Close'])
-
-        # Train a Linear Regression model
-    #     model = LinearRegression()
-    #     model.fit(X, y)
-
-    #     # Predict price for the chosen date
-    #     chosen_date_ordinal = datetime.toordinal(user_date)
-    #     predicted_price = model.predict([[chosen_date_ordinal]])
-
-    #     # Display the prediction
-    #     st.write(f"Predicted Price on {user_date.strftime('%Y-%m-%d')}: **${predicted_price[0]:.2f}**")
-    #     st.write("*Note: Prediction model is trained on 2 years of historical data*")
