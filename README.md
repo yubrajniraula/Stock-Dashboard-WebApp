@@ -4,8 +4,9 @@
 This is a simple stock dashboard web application that provides:
 - Stock details such as company name, current price, opening price, day low/high, 52-week low/high, market cap, revenue details, and latest news.
 - Balance sheet (yearly and quarterly).
-- Chart visualization of stock performance over selected periods.
-- Prediction capability using Machine Learning model.
+- Latest news of the stock.
+- Chart visualization (line, candlestick, and volume-overlaid chart) of stock performance over selected periods.
+- Prediction capability using Machine Learning model (Polynomial Regression).
 
 ## Features
 - Search for any stock by its ticker.

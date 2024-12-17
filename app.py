@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
+
 
 # App Configuration
 st.set_page_config(page_title="Stock Dashboard", layout="wide")
@@ -154,6 +155,10 @@ if ticker:
         future_days = (user_date - two_years_data.index.max().date()).days
         future_prices = []
 
+        # Calculate Mean Squared Error and R^2 Score for the test set
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+
         if future_days > 0:
             # Generate realistic future features for predictions
             for i in range(1, future_days + 1):
@@ -170,7 +175,11 @@ if ticker:
             # Get prediction for the user-selected date
             selected_future_price = future_prices[-1][1]
             st.write(f"Predicted Price on {user_date}: **${selected_future_price:.2f}**")
-            st.write("** 🚨 Disclaimer 🚨: \
+
+            # Display the accuracy metrics
+            st.write(f"**Test Set Mean Squared Error (MSE):** {mse:.2f}")
+            st.write(f"**Test Set R² Score:** {r2:.2f}")
+            st.write("**🚨 Disclaimer 🚨: \
             This is not a financial advice. \
             Investing involves risk.**\
             ")
